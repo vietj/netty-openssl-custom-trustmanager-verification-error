@@ -1,16 +1,15 @@
 import io.netty.bootstrap.Bootstrap;
+import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.ssl.SslProvider;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
-import io.vertx.core.Vertx;
-import io.vertx.core.net.NetServerOptions;
-import io.vertx.core.net.PemKeyCertOptions;
 import org.junit.Test;
 
 import javax.net.ssl.ManagerFactoryParameters;
@@ -41,18 +40,31 @@ public class TheTest {
 
     SelfSignedCertificate cert = new SelfSignedCertificate("localhost");
 
-    Vertx vertx = Vertx.vertx();
-
-    vertx.createNetServer(new NetServerOptions()
-        .setSsl(true).setKeyCertOptions(new PemKeyCertOptions()
-            .setKeyPath(cert.privateKey().getAbsolutePath())
-            .setCertPath(cert.certificate().getAbsolutePath()))).connectHandler(conn -> {
-      System.out.println("connected");
-    }).listen(1234, ar -> {
-      if (ar.succeeded()) {
+    ServerBootstrap bootstrap = new ServerBootstrap();
+    bootstrap.group(new NioEventLoopGroup());
+    bootstrap.channel(NioServerSocketChannel.class);
+    bootstrap.childHandler(new ChannelInitializer<Channel>() {
+      @Override
+      protected void initChannel(Channel ch) throws Exception {
+        System.out.println("client has connected starting handshake");
+        SslContext ctx = SslContextBuilder.forServer(cert.certificate(), cert.privateKey()).build();
+        SslHandler handler = new SslHandler(ctx.newEngine(ch.alloc()));
+        handler.handshakeFuture().addListener(fut -> {
+          if (fut.isSuccess()) {
+            System.out.println("connected to server");
+          } else {
+            System.out.println("handshake failed on server");
+          }
+        });
+        ch.pipeline().addLast("ssl", handler);
+      }
+    });
+    bootstrap.bind(1234).addListener(fut -> {
+      if (fut.isSuccess()) {
+        System.out.println("server started");
         connect(cert);
       } else {
-        System.out.println("Could not bind server " + ar.cause().getMessage());
+        System.out.println("could not bind server " + fut.cause().getMessage());
       }
     });
 
@@ -67,6 +79,7 @@ public class TheTest {
     bootstrap.handler(new ChannelInitializer<Channel>() {
       @Override
       protected void initChannel(Channel ch) throws Exception {
+        System.out.println("client connected starting handshake");
         SslContext ctx = SslContextBuilder.forClient()
 
             // Switching from JDK to OPEN_SSL make the test pass
